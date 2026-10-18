@@ -7,7 +7,10 @@ from datetime import datetime, timezone, timedelta
 API_KEY = os.environ["COINANK_API_KEY"]
 
 # Add or remove coins here (Binance USDT pairs)
-COINS = ["KSMUSDT"]
+COINS = [
+    "KSMUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT",
+    "ADAUSDT", "NEARUSDT", "MOVRUSDT", "LINKUSDT", "DOTUSDT",
+]
 
 INTERVAL = "4h"
 STATE_FILE = "seen.json"
