@@ -8,7 +8,7 @@ API_KEY = os.environ["COINANK_API_KEY"]
 
 # Add or remove coins here (Binance USDT pairs)
 COINS = [
-    "KSMUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "SHIBUSDT",
+    "KSMUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "ATOMUSDT",
     "ADAUSDT", "NEARUSDT", "MOVRUSDT", "LINKUSDT", "DOTUSDT",
 ]
 
