@@ -1,183 +1,34 @@
-import json
-import os
-import time
-import requests
-from datetime import datetime, timezone, timedelta
+name: ALT OB Signal
 
-API_KEY = os.environ["COINANK_API_KEY"]
+on:
+  schedule:
+    - cron: "10 * * * *"
+  workflow_dispatch:
 
-# Add or remove coins here (Binance USDT pairs)
-COINS = ["KSMUSDT"]
+permissions:
+  contents: write
 
-INTERVAL = "4h"
-STATE_FILE = "seen.json"
-PH_TZ = timezone(timedelta(hours=8))
-MAX_AGE_HOURS = 12   # only alert on blocks formed within this many hours
-MAX_KEEP = 500       # how many past block times to remember per side
-PAUSE_SECONDS = 1    # small pause between coins to be gentle on the API
-
-HEADERS = {"apikey": API_KEY}
-SMC_URL = "https://open-api.coinank.com/api/indicator/smc"
-PUSH_URL = "https://open-api.coinank.com/api/webhook/push"
-
-
-def fmt(p):
-    if p >= 1000:
-        return f"{p:,.1f}"
-    if p >= 1:
-        return f"{p:,.3f}"
-    return f"{p:.6f}"
-
-
-def get_smc_data(symbol):
-    params = {"symbol": symbol, "interval": INTERVAL, "exchange": "Binance"}
-    try:
-        r = requests.get(SMC_URL, headers=HEADERS, params=params, timeout=10)
-        data = r.json()
-        if data.get("success"):
-            return data["data"]
-        print(symbol, "API Error:", data)
-    except Exception as e:
-        print(symbol, "Request failed:", e)
-    return None
-
-
-def get_price(symbol):
-    for base in ("https://data-api.binance.vision", "https://api.binance.com"):
-        try:
-            r = requests.get(
-                f"{base}/api/v3/ticker/price",
-                params={"symbol": symbol},
-                timeout=10,
-            )
-            return float(r.json()["price"])
-        except Exception as e:
-            print(symbol, "Price failed:", base, e)
-    return None
-
-
-def send_push(title, body):
-    payload = {"title": title, "body": body, "sound": "1"}
-    try:
-        res = requests.post(PUSH_URL, headers=HEADERS, json=payload, timeout=10)
-        print("Push sent:", res.status_code, res.text)
-    except Exception as e:
-        print("Push failed:", e)
-
-    token = os.environ.get("TELEGRAM_BOT_TOKEN")
-    chat_id = os.environ.get("TELEGRAM_CHAT_ID")
-    if token and chat_id:
-        try:
-            r = requests.post(
-                f"https://api.telegram.org/bot{token}/sendMessage",
-                json={"chat_id": chat_id, "text": f"{title}\n{body}"},
-                timeout=10,
-            )
-            print("Telegram sent:", r.status_code)
-        except Exception as e:
-            print("Telegram failed:", e)
-
-
-def zone_text(ob, price):
-    """Return (zone line, distance line) for an order block."""
-    h, l = ob.get("h"), ob.get("l")
-    if h is None or l is None:
-        return None, None
-    zone = f"Zone: {fmt(l)} - {fmt(h)}"
-    if not price:
-        return zone, None
-    if l <= price <= h:
-        dist = "Distance: price is inside the zone"
-    elif price > h:
-        pct = (price - h) / price * 100
-        dist = f"Distance: {pct:.2f}% below price"
-    else:
-        pct = (l - price) / price * 100
-        dist = f"Distance: {pct:.2f}% above price"
-    return zone, dist
-
-
-def load_state():
-    if os.path.exists(STATE_FILE):
-        try:
-            with open(STATE_FILE) as f:
-                return json.load(f)
-        except Exception as e:
-            print("State read failed:", e)
-    return {}
-
-
-def save_state(state):
-    with open(STATE_FILE, "w") as f:
-        json.dump(state, f)
-
-
-def process_coin(symbol, state):
-    data = get_smc_data(symbol)
-    if not data:
-        return  # keep old state for this coin untouched
-
-    coin = symbol.replace("USDT", "")
-    # a coin with no saved state yet is a first run: record quietly, no alerts
-    first_run = symbol not in state
-    coin_state = state.get(symbol, {"bullish": [], "bearish": []})
-
-    now_ms = datetime.now(timezone.utc).timestamp() * 1000
-    max_age_ms = MAX_AGE_HOURS * 3600 * 1000
-
-    new_state = {"bullish": [], "bearish": []}
-    price = None
-    price_loaded = False
-
-    for key, icon, label in (
-        ("bullish", "\U0001f7e2", "Bullish"),
-        ("bearish", "\U0001f534", "Bearish"),
-    ):
-        seen = list(coin_state.get(key, []))
-        for ob in data.get(f"{key}OB", []):
-            ts = ob.get("ts")
-            if not ts or ts in seen:
-                continue
-            seen.append(ts)
-            if first_run:
-                continue
-            if now_ms - ts > max_age_ms:
-                print("Skipped old block:", symbol, key, ts)
-                continue
-            if not price_loaded:
-                price = get_price(symbol)
-                price_loaded = True
-            when = datetime.fromtimestamp(ts / 1000, PH_TZ)
-            price_txt = fmt(price) if price else "n/a"
-            title = f"{icon} New {label} OB Alert ({coin} 4H)"
-            zone, dist = zone_text(ob, price)
-            extra = "".join(f"{x}\n" for x in (zone, dist) if x)
-            body = (
-                f"Price: {price_txt}\n"
-                f"{extra}"
-                f"Time: {when.strftime('%Y-%m-%d %I:%M %p')} PHT\n"
-                f"Sent: {datetime.now(PH_TZ).strftime('%Y-%m-%d %I:%M %p')} PHT\n"
-                "Trade responsibly by Rouie"
-            )
-            print(title)
-            print(body)
-            send_push(title, body)
-        new_state[key] = seen[-MAX_KEEP:]
-
-    state[symbol] = new_state
-
-
-def main():
-    state = load_state()
-    for i, symbol in enumerate(COINS):
-        if i:
-            time.sleep(PAUSE_SECONDS)
-        try:
-            process_coin(symbol, state)
-        except Exception as e:
-            print(symbol, "failed:", e)
-    save_state(state)
-
-
-if __name__ == "__main__":
-    main()
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install requests
+      - name: Run signal
+        run: python signal_alts.py
+        env:
+          COINANK_API_KEY: ${{ secrets.COINANK_API_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      - name: Save state
+        run: |
+          [ -f seen.json ] || exit 0
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git add seen.json
+          git commit -m "update state" || exit 0
+          git pull --rebase
+          git push
