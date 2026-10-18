@@ -30,7 +30,9 @@ def fmt(p):
         return f"{p:,.1f}"
     if p >= 1:
         return f"{p:,.3f}"
-    return f"{p:.6f}"
+    if p >= 0.01:
+        return f"{p:.5f}"
+    return f"{p:.8f}"
 
 
 def get_smc_data(symbol, interval):
