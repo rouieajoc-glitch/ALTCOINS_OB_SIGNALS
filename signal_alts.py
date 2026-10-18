@@ -13,7 +13,7 @@ COINS = [
 ]
 
 # timeframe -> only alert on blocks formed within this many hours
-INTERVALS = {"4h": 12, "1d": 48}
+INTERVALS = {"4h": 5000, "1d": 5000}
 
 STATE_FILE = "seen.json"
 PH_TZ = timezone(timedelta(hours=8))
