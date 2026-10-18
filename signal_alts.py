@@ -12,7 +12,7 @@ COINS = ["KSMUSDT"]
 INTERVAL = "4h"
 STATE_FILE = "seen.json"
 PH_TZ = timezone(timedelta(hours=8))
-MAX_AGE_HOURS = 100000   # only alert on blocks formed within this many hours
+MAX_AGE_HOURS = 12   # only alert on blocks formed within this many hours
 MAX_KEEP = 500       # how many past block times to remember per side
 PAUSE_SECONDS = 1    # small pause between coins to be gentle on the API
 
