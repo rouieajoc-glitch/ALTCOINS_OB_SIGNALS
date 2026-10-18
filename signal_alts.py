@@ -12,12 +12,13 @@ COINS = [
     "ADAUSDT", "NEARUSDT", "MOVRUSDT", "LINKUSDT", "DOTUSDT",
 ]
 
-INTERVAL = "4h"
+# timeframe -> only alert on blocks formed within this many hours
+INTERVALS = {"4h": 12, "1d": 48}
+
 STATE_FILE = "seen.json"
 PH_TZ = timezone(timedelta(hours=8))
-MAX_AGE_HOURS = 12   # only alert on blocks formed within this many hours
 MAX_KEEP = 500       # how many past block times to remember per side
-PAUSE_SECONDS = 2    # small pause between coins to be gentle on the API
+PAUSE_SECONDS = 2    # small pause between requests to be gentle on the API
 
 HEADERS = {"apikey": API_KEY}
 SMC_URL = "https://open-api.coinank.com/api/indicator/smc"
@@ -32,16 +33,16 @@ def fmt(p):
     return f"{p:.6f}"
 
 
-def get_smc_data(symbol):
-    params = {"symbol": symbol, "interval": INTERVAL, "exchange": "Binance"}
+def get_smc_data(symbol, interval):
+    params = {"symbol": symbol, "interval": interval, "exchange": "Binance"}
     try:
         r = requests.get(SMC_URL, headers=HEADERS, params=params, timeout=10)
         data = r.json()
         if data.get("success"):
             return data["data"]
-        print(symbol, "API Error:", data)
+        print(symbol, interval, "API Error:", data)
     except Exception as e:
-        print(symbol, "Request failed:", e)
+        print(symbol, interval, "Request failed:", e)
     return None
 
 
@@ -115,18 +116,21 @@ def save_state(state):
         json.dump(state, f)
 
 
-def process_coin(symbol, state):
-    data = get_smc_data(symbol)
+def process_coin(symbol, interval, max_age_hours, state):
+    data = get_smc_data(symbol, interval)
     if not data:
         return  # keep old state for this coin untouched
 
     coin = symbol.replace("USDT", "")
-    # a coin with no saved state yet is a first run: record quietly, no alerts
-    first_run = symbol not in state
-    coin_state = state.get(symbol, {"bullish": [], "bearish": []})
+    tf = interval.upper()
+    # 4h keeps the original key so existing history carries over
+    state_key = symbol if interval == "4h" else f"{symbol}_{interval}"
+    # nothing saved yet = first run: record quietly, no alerts
+    first_run = state_key not in state
+    coin_state = state.get(state_key, {"bullish": [], "bearish": []})
 
     now_ms = datetime.now(timezone.utc).timestamp() * 1000
-    max_age_ms = MAX_AGE_HOURS * 3600 * 1000
+    max_age_ms = max_age_hours * 3600 * 1000
 
     new_state = {"bullish": [], "bearish": []}
     price = None
@@ -145,14 +149,14 @@ def process_coin(symbol, state):
             if first_run:
                 continue
             if now_ms - ts > max_age_ms:
-                print("Skipped old block:", symbol, key, ts)
+                print("Skipped old block:", symbol, interval, key, ts)
                 continue
             if not price_loaded:
                 price = get_price(symbol)
                 price_loaded = True
             when = datetime.fromtimestamp(ts / 1000, PH_TZ)
             price_txt = fmt(price) if price else "n/a"
-            title = f"{icon} New {label} OB Alert ({coin} 4H)"
+            title = f"{icon} New {label} OB Alert ({coin} {tf})"
             zone, dist = zone_text(ob, price)
             extra = "".join(f"{x}\n" for x in (zone, dist) if x)
             body = (
@@ -167,18 +171,21 @@ def process_coin(symbol, state):
             send_push(title, body)
         new_state[key] = seen[-MAX_KEEP:]
 
-    state[symbol] = new_state
+    state[state_key] = new_state
 
 
 def main():
     state = load_state()
-    for i, symbol in enumerate(COINS):
-        if i:
-            time.sleep(PAUSE_SECONDS)
-        try:
-            process_coin(symbol, state)
-        except Exception as e:
-            print(symbol, "failed:", e)
+    first = True
+    for symbol in COINS:
+        for interval, max_age in INTERVALS.items():
+            if not first:
+                time.sleep(PAUSE_SECONDS)
+            first = False
+            try:
+                process_coin(symbol, interval, max_age, state)
+            except Exception as e:
+                print(symbol, interval, "failed:", e)
     save_state(state)
 
 
